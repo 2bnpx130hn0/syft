@@ -88,6 +88,11 @@ release:
 tools:
 	binny install
 
+# Personal shortcut: build and immediately print the version to confirm it compiled correctly
+.PHONY: build-check
+build-check: build
+	$(BUILD_DIR)/$(BINARY) version
+
 ## help: display this help message
 .PHONY: help
 help:
