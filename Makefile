@@ -1,46 +1,96 @@
-OWNER = anchore
-PROJECT = syft
+# Makefile for syft - Fork of anchore/syft
 
-TOOL_DIR = .tool
-BINNY = $(TOOL_DIR)/binny
-TASK = $(TOOL_DIR)/task
+BINARY := syft
+GO := go
+GOFLAGS ?= -trimpath
+LDFLAGS := -ldflags "-s -w"
+BUILD_DIR := ./dist
+MAIN_PACKAGE := ./cmd/syft
 
-.DEFAULT_GOAL := make-default
+# Version info
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-## Bootstrapping targets #################################
+LD_VERSION_FLAGS := -ldflags "-s -w \
+	-X github.com/anchore/syft/internal/version.version=$(VERSION) \
+	-X github.com/anchore/syft/internal/version.gitCommit=$(GIT_COMMIT) \
+	-X github.com/anchore/syft/internal/version.buildDate=$(BUILD_DATE)"
 
-# note: we need to assume that binny and task have not already been installed
-$(BINNY):
-	@mkdir -p $(TOOL_DIR)
-	@curl -sSfL https://get.anchore.io/binny | sh -s -- -b $(TOOL_DIR)
+.DEFAULT_GOAL := build
 
-# note: we need to assume that binny and task have not already been installed
-.PHONY: task
-$(TASK) task: $(BINNY)
-	@$(BINNY) install task -q
+.PHONY: all
+all: clean build
 
-.PHONY: ci-bootstrap-go
-ci-bootstrap-go:
-	go mod download
+## build: compile the binary
+.PHONY: build
+build:
+	$(GO) build $(GOFLAGS) $(LD_VERSION_FLAGS) -o $(BUILD_DIR)/$(BINARY) $(MAIN_PACKAGE)
 
-# this is a bootstrapping catch-all, where if the target doesn't exist, we'll ensure the tools are installed and then try again
-%:
-	@make --silent $(TASK)
-	@$(TASK) $@
+## run: run the binary
+.PHONY: run
+run:
+	$(GO) run $(MAIN_PACKAGE)
 
-## Shim targets #################################
+## test: run all unit tests
+.PHONY: test
+test:
+	$(GO) test ./... -v -race -timeout 300s
 
-.PHONY: make-default
-make-default: $(TASK)
-	@# run the default task in the taskfile
-	@$(TASK)
+## test-unit: run unit tests only
+.PHONY: test-unit
+test-unit:
+	$(GO) test ./... -short -race -timeout 120s
 
-# for those of us that can't seem to kick the habit of typing `make ...` lets wrap the superior `task` tool
-TASKS := $(shell bash -c "test -f $(TASK) && NO_COLOR=1 $(TASK) -l | grep '^\* ' | cut -d' ' -f2 | tr -d ':' | tr '\n' ' '" ) $(shell bash -c "test -f $(TASK) && NO_COLOR=1 $(TASK) -l | grep 'aliases:' | cut -d ':' -f 3 | tr '\n' ' ' | tr -d ','")
+## test-integration: run integration tests
+.PHONY: test-integration
+test-integration:
+	$(GO) test ./... -run Integration -race -timeout 300s
 
-.PHONY: $(TASKS)
-$(TASKS): $(TASK)
-	@$(TASK) $@
+## lint: run golangci-lint
+.PHONY: lint
+lint:
+	golangci-lint run ./...
 
-help: $(TASK)
-	@$(TASK) -l
+## lint-fix: run golangci-lint with auto-fix
+.PHONY: lint-fix
+lint-fix:
+	golangci-lint run --fix ./...
+
+## format: format go source files
+.PHONY: format
+format:
+	gofmt -s -w .
+	goimports -w .
+
+## tidy: tidy go modules
+.PHONY: tidy
+tidy:
+	$(GO) mod tidy
+
+## clean: remove build artifacts
+.PHONY: clean
+clean:
+	rm -rf $(BUILD_DIR)
+
+## snapshot: create a snapshot release with goreleaser
+.PHONY: snapshot
+snapshot:
+	goreleaser release --snapshot --clean --skip-publish
+
+## release: create a release with goreleaser
+.PHONY: release
+release:
+	goreleaser release --clean
+
+## tools: install required tools via binny
+.PHONY: tools
+tools:
+	binny install
+
+## help: display this help message
+.PHONY: help
+help:
+	@echo "Usage: make [target]"
+	@echo ""
+	@sed -n 's/^##//p' $(MAKEFILE_LIST) | column -t -s ':' | sed -e 's/^/ /'
